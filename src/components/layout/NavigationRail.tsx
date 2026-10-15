@@ -8,6 +8,7 @@ import {
   LogOut,
   Key,
   ExternalLink,
+  ScanFace,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -19,6 +20,7 @@ interface NavigationRailProps {
   onOpenNewChat: () => void;
   onOpenLanding?: () => void;
   onOpenProfileModal?: () => void;
+  onOpenFaceTest?: () => void;
   hasActiveChat?: boolean;
 }
 
@@ -30,6 +32,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
   onOpenNewChat,
   onOpenLanding,
   onOpenProfileModal,
+  onOpenFaceTest,
   hasActiveChat = false,
 }) => {
   const { user, profile, signOut, keyPair } = useAuth();
@@ -105,6 +108,18 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
             <ShieldCheck className="h-4 w-4 text-slate-400" />
             <span>Security Center</span>
           </button>
+
+          {onOpenFaceTest && (
+            <button
+              type="button"
+              onClick={onOpenFaceTest}
+              className="flex w-full items-center gap-3 rounded-2xl px-4 py-2.5 text-xs font-bold transition-all duration-150 text-emerald-800 bg-emerald-50/70 hover:bg-emerald-100/70 border border-emerald-200/50 shadow-2xs"
+              title="Test Face Biometric Verification & Liveness"
+            >
+              <ScanFace className="h-4 w-4 text-emerald-600" />
+              <span>Face Verification Test</span>
+            </button>
+          )}
 
           <button
             type="button"

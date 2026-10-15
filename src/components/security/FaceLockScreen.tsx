@@ -13,6 +13,7 @@ import {
   extractLandmarkDescriptor,
   computeBiometricSimilarity,
   getEnrolledFaceProfile,
+  enrollFaceProfile,
 } from '../../lib/faceVerification';
 import { playUnlockSound } from '../../lib/notifications';
 import { useAuth } from '../../context/AuthContext';
@@ -65,10 +66,7 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
     let isMounted = true;
 
     async function startScanner() {
-      if (!enrolledFace?.templateVector) {
-        onUnlock();
-        return;
-      }
+      const isEnrolled = Boolean(enrolledFace?.templateVector);
 
       // Stop any lingering media stream before starting fresh
       stopCamera();
@@ -101,7 +99,11 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
           videoRef.current.play().catch(() => {});
         }
 
-        setStatusMessage('Camera active. Loading AI biometric engine...');
+        setStatusMessage(
+          isEnrolled
+            ? 'Camera active. Loading AI biometric engine...'
+            : 'Camera active. Align face to register Face Lock...'
+        );
       } catch (camErr: unknown) {
         if (!isMounted) return;
         const msg = camErr instanceof Error ? camErr.message : String(camErr);
@@ -126,7 +128,11 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
           return;
         }
 
-        setStatusMessage('Position your face inside the circle scanner...');
+        setStatusMessage(
+          isEnrolled
+            ? 'Position your face inside the circle scanner...'
+            : 'First-time setup: Center your face inside the circle to enroll...'
+        );
 
         let consecutiveMatches = 0;
 
@@ -146,7 +152,16 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
               if (results.faceLandmarks && results.faceLandmarks.length > 0) {
                 const landmarks = results.faceLandmarks[0];
                 const { descriptor: currentVector } = extractLandmarkDescriptor(landmarks);
-                const score = computeBiometricSimilarity(currentVector, enrolledFace.templateVector);
+
+                if (!isEnrolled) {
+                  // Enroll face on first detection and unlock
+                  enrollFaceProfile(userId, currentVector);
+                  setStatusMessage('✓ Face enrolled successfully! Unlocking SafeChat...');
+                  handleSuccessfulUnlock();
+                  return;
+                }
+
+                const score = computeBiometricSimilarity(currentVector, enrolledFace!.templateVector);
                 setSimilarity(score);
 
                 if (score >= 0.68) {
@@ -162,7 +177,11 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
                 }
               } else {
                 consecutiveMatches = 0;
-                setStatusMessage('Align your face inside the circle scanner...');
+                setStatusMessage(
+                  isEnrolled
+                    ? 'Align your face inside the circle scanner...'
+                    : 'First-time setup: Look at camera to register Face Lock...'
+                );
               }
             } catch (evalErr) {
               console.debug('Landmark detection pass:', evalErr);

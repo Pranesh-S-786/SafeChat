@@ -20,6 +20,8 @@ import {
   Users,
   Trash2,
   FileText,
+  ScanFace,
+  ShieldCheck,
 } from 'lucide-react';
 import type {
   AIJuryResult,
@@ -46,6 +48,7 @@ interface ChatMainProps {
     fileMetadata?: FileMetadata
   ) => Promise<void>;
   onOpenVideoChallenge: () => void;
+  onTestMyFace?: () => void;
   onToggleSecurityPanel: () => void;
   onInspectJury: (msg: DecryptedMessage) => void;
   onOpenNewChat: () => void;
@@ -62,6 +65,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   currentUserId,
   onSendMessage,
   onOpenVideoChallenge,
+  onTestMyFace,
   onToggleSecurityPanel,
   onInspectJury,
   onOpenNewChat,
@@ -74,6 +78,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [liveKeystrokeReport, setLiveKeystrokeReport] = useState<KeystrokeRiskReport | null>(null);
+  const [showFaceMenu, setShowFaceMenu] = useState(false);
 
   // Call modal state
   const [isCallOpen, setIsCallOpen] = useState(false);
@@ -413,14 +418,62 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           </button>
 
           {!isGroup && (
-            <button
-              type="button"
-              onClick={onOpenVideoChallenge}
-              className="rounded-full p-2 text-slate-600 hover:bg-slate-100 transition-colors"
-              title="Request Face Verification Challenge"
-            >
-              <Shield className="h-4 w-4 text-emerald-600" />
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowFaceMenu(!showFaceMenu)}
+                className={`rounded-full p-2 transition-colors ${
+                  showFaceMenu ? 'bg-emerald-100 text-emerald-800' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+                title="Face Verification & Biometric Challenges"
+              >
+                <Shield className="h-4 w-4 text-emerald-600" />
+              </button>
+
+              {showFaceMenu && (
+                <div className="absolute right-0 top-11 z-50 w-72 rounded-2xl border border-slate-200/90 bg-white p-2 shadow-2xl animate-in fade-in zoom-in-95">
+                  <div className="px-2.5 py-1.5 border-b border-slate-100">
+                    <span className="text-xs font-bold text-slate-800">Biometric Facial Verification</span>
+                    <p className="text-[10px] text-slate-400">Self-test or verify contact authenticity</p>
+                  </div>
+                  <div className="space-y-1 pt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowFaceMenu(false);
+                        if (onTestMyFace) onTestMyFace();
+                      }}
+                      className="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 transition-colors text-left cursor-pointer"
+                    >
+                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 shrink-0">
+                        <ScanFace className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="font-semibold text-slate-900">Test My Face (Self Test)</div>
+                        <div className="text-[10px] text-slate-400">Live camera, liveness & match %</div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowFaceMenu(false);
+                        onOpenVideoChallenge();
+                      }}
+                      className="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors text-left cursor-pointer"
+                    >
+                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 shrink-0">
+                        <ShieldCheck className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="font-semibold text-slate-900">Verify {otherParticipants[0]?.display_name || 'Contact'}</div>
+                        <div className="text-[10px] text-slate-400">Send challenge & receive match report</div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           <button

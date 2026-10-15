@@ -116,19 +116,19 @@ export const FaceVerificationModal: React.FC<FaceVerificationModalProps> = ({
     }
   }, [challenge]);
 
-  const isChallenge = Boolean(challenge);
+  const isChallenge = Boolean(challenge) || Boolean(enrolledProfile);
   const isCustomPhotoChallenge = Boolean(parsedChallenge.customReferenceVector);
-  const isFirstTimeEnrollment = !isChallenge && !enrolledProfile;
+  const isFirstTimeEnrollment = !challenge && !enrolledProfile;
 
-  // Pick randomized liveness challenge when challenge is active
+  // Pick randomized liveness challenge whenever modal opens
   useEffect(() => {
-    if (isOpen && isChallenge) {
+    if (isOpen) {
       const challenges: LivenessChallengeType[] = ['blink', 'turn_left', 'turn_right', 'nod_down'];
       const picked = challenges[Math.floor(Math.random() * challenges.length)];
       setLivenessChallenge(picked);
       setLivenessStage('pending');
     }
-  }, [isOpen, isChallenge]);
+  }, [isOpen]);
 
   // Load genuine MediaPipe FaceLandmarker model when modal opens
   useEffect(() => {

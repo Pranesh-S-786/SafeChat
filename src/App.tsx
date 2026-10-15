@@ -748,9 +748,8 @@ const SafeChatProductionApp: React.FC = () => {
     return <LandingPage onGetStarted={() => setViewMode('auth')} />;
   }
 
-  // Face lock verification on every application opening/refresh if face is enrolled
-  const enrolledFace = getEnrolledFaceProfile(user.id);
-  if (enrolledFace?.templateVector && !isFaceUnlocked) {
+  // Face lock verification on every application opening and page refresh
+  if (user && !isFaceUnlocked) {
     return <FaceLockScreen userId={user.id} onUnlock={() => setIsFaceUnlocked(true)} />;
   }
 
@@ -782,6 +781,10 @@ const SafeChatProductionApp: React.FC = () => {
         onOpenNewChat={() => setIsNewChatModalOpen(true)}
         onOpenLanding={() => setViewMode('landing')}
         onOpenProfileModal={() => setIsProfileModalOpen(true)}
+        onOpenFaceTest={() => {
+          setActiveChallenge(null);
+          setIsFaceModalOpen(true);
+        }}
       />
 
       {/* Column 2: Genuine Conversation List */}
@@ -814,6 +817,10 @@ const SafeChatProductionApp: React.FC = () => {
           currentUserId={user.id}
           onSendMessage={handleSendMessage}
           onOpenVideoChallenge={handleOpenFaceVerification}
+          onTestMyFace={() => {
+            setActiveChallenge(null);
+            setIsFaceModalOpen(true);
+          }}
           onToggleSecurityPanel={() => setIsSecurityPanelOpen(!isSecurityPanelOpen)}
           onInspectJury={(msg) => setSelectedJuryMessage(msg)}
           onOpenNewChat={() => setIsNewChatModalOpen(true)}
