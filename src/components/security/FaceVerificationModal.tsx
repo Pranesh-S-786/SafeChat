@@ -22,6 +22,8 @@ import {
   getEnrolledFaceProfile,
   getModelError,
   initFaceLandmarker,
+  getBiometricMatchPercentage,
+  BIOMETRIC_MATCH_THRESHOLD,
 } from '../../lib/faceVerification';
 import { updateUserProfile } from '../../lib/supabase';
 import type {
@@ -331,14 +333,15 @@ export const FaceVerificationModal: React.FC<FaceVerificationModalProps> = ({
           if (targetTemplate) {
             // Verification Mode: Compare genuine landmark descriptor with reference
             const similarity = computeBiometricSimilarity(targetTemplate, descriptor);
-            setMatchScore(similarity);
+            const accuracy = getBiometricMatchPercentage(similarity);
+            setMatchScore(accuracy / 100);
 
-            if (similarity >= 0.70) {
+            if (similarity >= BIOMETRIC_MATCH_THRESHOLD) {
               stableMatchFrames += 2;
               divergentFrames = Math.max(0, divergentFrames - 2);
               const progress = Math.min(100, Math.round((stableMatchFrames / requiredMatchFrames) * 100));
               setVerifyingProgress(progress);
-              setStatusMessage(`Face matched (${Math.round(similarity * 100)}% accuracy). Verifying (${progress}%)...`);
+              setStatusMessage(`Face matched (${accuracy}% accuracy). Verifying (${progress}%)...`);
 
               if (stableMatchFrames >= requiredMatchFrames) {
                 // Generate cryptographic attestation
@@ -351,7 +354,6 @@ export const FaceVerificationModal: React.FC<FaceVerificationModalProps> = ({
                   ).catch(console.error);
                 }
 
-                const accuracy = Math.round(similarity * 100);
                 const label = isCustomPhotoChallenge
                   ? 'Matched against reference photo'
                   : 'Matched against enrolled biometric baseline';
@@ -364,16 +366,20 @@ export const FaceVerificationModal: React.FC<FaceVerificationModalProps> = ({
               }
             } else {
               stableMatchFrames = Math.max(0, stableMatchFrames - 1);
-              const currentAccuracy = Math.max(5, Math.round(similarity * 100));
-              setStatusMessage(`Scanning face landmarks (${currentAccuracy}% match, threshold 70%). Align straight.`);
+
+              if (accuracy <= 45) {
+                setStatusMessage(`⚠️ Facial biometric mismatch (${accuracy}% match). Unauthorized person.`);
+              } else {
+                setStatusMessage(`Scanning face landmarks (${accuracy}% match). Align straight and hold steady.`);
+              }
 
               // After repeated divergent frames (~3-4s of non-match), conclude failed verification
               divergentFrames++;
               if (divergentFrames >= 120 && isChallenge) {
-                setStatusMessage(`Biometric match failed (${currentAccuracy}% accuracy does not meet 70% threshold).`);
+                setStatusMessage(`Biometric match failed (${accuracy}% accuracy does not meet threshold).`);
                 setVerificationResult('failed');
                 setIsCompleted(true);
-                if (onUpdateStatus) onUpdateStatus('failed', currentAccuracy);
+                if (onUpdateStatus) onUpdateStatus('failed', accuracy);
                 stopCamera();
                 return;
               }

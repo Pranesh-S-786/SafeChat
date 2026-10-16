@@ -324,6 +324,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })
     );
 
+    // Save pending face pattern under email key in case confirmation/provisioning is used
+    if (facePattern && facePattern.length > 0) {
+      localStorage.setItem(
+        `safechat_face_template_pending_${cleanEmail}`,
+        JSON.stringify({
+          enrolled: true,
+          enrolledAt: new Date().toISOString(),
+          templateVector: facePattern,
+        })
+      );
+    }
+
     // Send real 6-digit OTP code using user's configured SMTP credentials
     const smtpRes = await sendOtpViaSmtp(cleanEmail, otpCode);
 

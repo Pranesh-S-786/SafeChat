@@ -34,6 +34,7 @@ import type {
 } from '../../lib/types';
 import { KeystrokeCollector } from '../../lib/keystroke';
 import { CallModal } from './CallModal';
+import { EmojiPicker } from './EmojiPicker';
 import { VoiceMessageBubble } from './VoiceMessageBubble';
 
 interface ChatMainProps {
@@ -79,6 +80,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   const [isSending, setIsSending] = useState(false);
   const [liveKeystrokeReport, setLiveKeystrokeReport] = useState<KeystrokeRiskReport | null>(null);
   const [showFaceMenu, setShowFaceMenu] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   // Call modal state
   const [isCallOpen, setIsCallOpen] = useState(false);
@@ -852,15 +854,26 @@ export const ChatMain: React.FC<ChatMainProps> = ({
                 className="flex-1 bg-transparent px-2 text-xs md:text-sm text-slate-900 placeholder-slate-400 focus:outline-none"
               />
 
-              {/* Emoji button */}
-              <button
-                type="button"
-                onClick={() => setInputText((prev) => prev + ' 😊')}
-                className="p-1.5 text-slate-400 hover:text-slate-600 transition-colors"
-                title="Add Emoji"
-              >
-                <Smile className="h-5 w-5" />
-              </button>
+              {/* Emoji button & Full Keypad Popover */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowEmojiPicker((prev) => !prev)}
+                  className={`p-1.5 transition-colors ${
+                    showEmojiPicker ? 'text-emerald-600' : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                  title="Choose Emoji"
+                >
+                  <Smile className="h-5 w-5" />
+                </button>
+
+                {showEmojiPicker && (
+                  <EmojiPicker
+                    onSelectEmoji={(emoji) => setInputText((prev) => prev + emoji)}
+                    onClose={() => setShowEmojiPicker(false)}
+                  />
+                )}
+              </div>
 
               {/* Action Button: Voice Record if empty, Send if text present */}
               {inputText.trim() ? (

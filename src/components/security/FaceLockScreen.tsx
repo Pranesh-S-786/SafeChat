@@ -5,18 +5,20 @@ import {
   AlertTriangle,
   KeyRound,
   LogOut,
-  Zap,
   RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import {
   initFaceLandmarker,
   extractLandmarkDescriptor,
   computeBiometricSimilarity,
   getEnrolledFaceProfile,
-  enrollFaceProfile,
+  getBiometricMatchPercentage,
+  BIOMETRIC_MATCH_THRESHOLD,
 } from '../../lib/faceVerification';
 import { playUnlockSound } from '../../lib/notifications';
 import { useAuth } from '../../context/AuthContext';
+import { getSupabaseClient } from '../../lib/supabase';
 
 interface FaceLockScreenProps {
   userId: string;
@@ -24,22 +26,25 @@ interface FaceLockScreenProps {
 }
 
 export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock }) => {
-  const { signOut } = useAuth();
-  const [similarity, setSimilarity] = useState<number | null>(null);
-  const [statusMessage, setStatusMessage] = useState('Accessing camera...');
+  const { user, signOut } = useAuth();
+  const [matchPercentage, setMatchPercentage] = useState<number | null>(null);
+  const [isFaceDetected, setIsFaceDetected] = useState<boolean>(false);
+  const [statusMessage, setStatusMessage] = useState('Initializing camera...');
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [showPasswordFallback, setShowPasswordFallback] = useState(false);
   const [fallbackInput, setFallbackInput] = useState('');
   const [fallbackError, setFallbackError] = useState<string | null>(null);
+  const [isVerifyingPassword, setIsVerifyingPassword] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animFrameRef = useRef<number | null>(null);
 
   const enrolledFace = getEnrolledFaceProfile(userId);
+  const isEnrolled = Boolean(enrolledFace?.enrolled && enrolledFace.templateVector);
 
   const stopCamera = useCallback(() => {
     if (animFrameRef.current) {
@@ -54,26 +59,27 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
 
   const handleSuccessfulUnlock = useCallback(() => {
     setIsUnlocked(true);
-    setStatusMessage('Identity confirmed. Unlocking SafeChat...');
-    playUnlockSound();
+    setStatusMessage('✓ Identity Verified! Unlocking SafeChat...');
+    try {
+      playUnlockSound();
+    } catch {
+      // ignore
+    }
     stopCamera();
     setTimeout(() => {
       onUnlock();
-    }, 500);
+    }, 350);
   }, [onUnlock, stopCamera]);
 
   useEffect(() => {
     let isMounted = true;
 
     async function startScanner() {
-      const isEnrolled = Boolean(enrolledFace?.templateVector);
-
-      // Stop any lingering media stream before starting fresh
       stopCamera();
       setCameraError(null);
       setStatusMessage('Accessing local camera...');
 
-      // 1. Immediately request the camera so the viewfinder opens with zero delay
+      // 1. Immediately request the camera stream
       let stream: MediaStream | null = null;
       try {
         try {
@@ -82,7 +88,6 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
             audio: false,
           });
         } catch {
-          // Fallback to basic video constraint if ideal parameters fail on webcam
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         }
 
@@ -93,7 +98,6 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
 
         streamRef.current = stream;
 
-        // Attach stream directly to video element
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.play().catch(() => {});
@@ -101,8 +105,8 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
 
         setStatusMessage(
           isEnrolled
-            ? 'Camera active. Loading AI biometric engine...'
-            : 'Camera active. Align face to register Face Lock...'
+            ? 'Camera active. Positioning face for biometric match...'
+            : 'No facial pattern enrolled yet. Please use password to unlock.'
         );
       } catch (camErr: unknown) {
         if (!isMounted) return;
@@ -110,31 +114,79 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
         console.warn('Camera access error in FaceLockScreen:', msg);
         setCameraError(
           msg.includes('Permission') || msg.includes('denied')
-            ? 'Camera permission denied. Allow camera in browser settings or use Quick Unlock.'
-            : 'Camera could not be accessed. Use Quick Unlock or Password to proceed.'
+            ? 'Camera permission denied. Allow camera access or unlock with password.'
+            : 'Camera could not be accessed. Please unlock with your account password.'
         );
-        setStatusMessage('Camera unavailable. You can unlock with password or instant access.');
+        setShowPasswordFallback(true);
         return;
       }
 
-      // 2. Load MediaPipe AI Face Landmarker model in parallel
+      // If user has not enrolled face biometrics yet, default to password mode
+      if (!isEnrolled) {
+        setShowPasswordFallback(true);
+        setStatusMessage('No face pattern enrolled yet. Please enter password to unlock.');
+        return;
+      }
+
+      // 2. Load MediaPipe AI Face Landmarker model
       try {
         const landmarker = await initFaceLandmarker();
-
         if (!isMounted) return;
 
         if (!landmarker) {
-          setStatusMessage('Biometric AI model is taking a moment. You can Quick Unlock anytime.');
+          setStatusMessage('Biometric AI model unavailable. Please unlock with password.');
+          setShowPasswordFallback(true);
           return;
         }
 
-        setStatusMessage(
-          isEnrolled
-            ? 'Position your face inside the circle scanner...'
-            : 'First-time setup: Center your face inside the circle to enroll...'
-        );
+        setStatusMessage('Look directly at camera to verify face...');
 
         let consecutiveMatches = 0;
+
+        const drawBiometricMesh = (
+          ctx: CanvasRenderingContext2D,
+          landmarks: any[],
+          width: number,
+          height: number,
+          isMatch: boolean
+        ) => {
+          ctx.clearRect(0, 0, width, height);
+
+          const POINTS = [
+            33, 133, 159, 145, 263, 362, 386, 374, // eyes
+            70, 63, 105, 300, 293, 334, // brows
+            1, 2, 4, 168, 195, // nose
+            61, 291, 0, 17, 13, 14, // lips
+            10, 152, 234, 454, 172, 397 // contour
+          ];
+
+          ctx.fillStyle = isMatch ? '#10b981' : '#f43f5e';
+          ctx.shadowColor = isMatch ? 'rgba(16, 185, 129, 0.9)' : 'rgba(244, 63, 94, 0.9)';
+          ctx.shadowBlur = 5;
+
+          for (const idx of POINTS) {
+            const pt = landmarks[idx];
+            if (!pt) continue;
+            // Mirrored canvas coordinates
+            const x = (1 - pt.x) * width;
+            const y = pt.y * height;
+            ctx.beginPath();
+            ctx.arc(x, y, 2.4, 0, 2 * Math.PI);
+            ctx.fill();
+          }
+
+          // Connecting eye line
+          ctx.shadowBlur = 0;
+          ctx.strokeStyle = isMatch ? 'rgba(16, 185, 129, 0.4)' : 'rgba(244, 63, 94, 0.4)';
+          ctx.lineWidth = 1.2;
+
+          if (landmarks[33] && landmarks[263]) {
+            ctx.beginPath();
+            ctx.moveTo((1 - landmarks[33].x) * width, landmarks[33].y * height);
+            ctx.lineTo((1 - landmarks[263].x) * width, landmarks[263].y * height);
+            ctx.stroke();
+          }
+        };
 
         const processFrame = () => {
           if (!isMounted) return;
@@ -145,43 +197,51 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
             video.play().catch(() => {});
           }
 
+          const overlayCanvas = overlayCanvasRef.current;
+          const overlayCtx = overlayCanvas?.getContext('2d');
+
           if (video && video.readyState >= 2 && landmarker) {
             try {
               const results = landmarker.detectForVideo(video, performance.now());
 
               if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+                setIsFaceDetected(true);
                 const landmarks = results.faceLandmarks[0];
                 const { descriptor: currentVector } = extractLandmarkDescriptor(landmarks);
 
-                if (!isEnrolled) {
-                  // Enroll face on first detection and unlock
-                  enrollFaceProfile(userId, currentVector);
-                  setStatusMessage('✓ Face enrolled successfully! Unlocking SafeChat...');
-                  handleSuccessfulUnlock();
-                  return;
+                const rawScore = computeBiometricSimilarity(currentVector, enrolledFace!.templateVector);
+                const percentage = getBiometricMatchPercentage(rawScore);
+                setMatchPercentage(percentage);
+
+                const isMatch = rawScore >= BIOMETRIC_MATCH_THRESHOLD;
+
+                if (overlayCtx) {
+                  drawBiometricMesh(overlayCtx, landmarks, 224, 224, isMatch);
                 }
 
-                const score = computeBiometricSimilarity(currentVector, enrolledFace!.templateVector);
-                setSimilarity(score);
-
-                if (score >= 0.68) {
+                if (isMatch) {
                   consecutiveMatches += 1;
-                  setStatusMessage(`Face matched: ${(score * 100).toFixed(0)}%. Confirming...`);
+                  setStatusMessage(`✓ Face Verified (${percentage}% match) — Confirming...`);
                   if (consecutiveMatches >= 2) {
                     handleSuccessfulUnlock();
                     return;
                   }
                 } else {
                   consecutiveMatches = 0;
-                  setStatusMessage(`Face detected (${(score * 100).toFixed(0)}% match). Align face closer...`);
+                  if (percentage <= 45) {
+                    setStatusMessage(`⚠️ Unauthorized Face (${percentage}% match) — Access Denied`);
+                  } else {
+                    setStatusMessage(`Scanning Face (${percentage}% match)... Align closer and hold steady`);
+                  }
                 }
               } else {
+                setIsFaceDetected(false);
                 consecutiveMatches = 0;
-                setStatusMessage(
-                  isEnrolled
-                    ? 'Align your face inside the circle scanner...'
-                    : 'First-time setup: Look at camera to register Face Lock...'
-                );
+                setMatchPercentage(null);
+                if (overlayCtx) {
+                  overlayCtx.clearRect(0, 0, 224, 224);
+                }
+                setStatusMessage('No face detected in camera. Center face in scanner...');
               }
             } catch (evalErr) {
               console.debug('Landmark detection pass:', evalErr);
@@ -196,7 +256,8 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
         if (!isMounted) return;
         const msg = err instanceof Error ? err.message : String(err);
         console.warn('AI Landmarker load warning:', msg);
-        setStatusMessage('AI engine unavailable. Click Instant Unlock to enter.');
+        setStatusMessage('AI engine unavailable. Please unlock with your account password.');
+        setShowPasswordFallback(true);
       }
     }
 
@@ -206,15 +267,40 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
       isMounted = false;
       stopCamera();
     };
-  }, [enrolledFace, handleSuccessfulUnlock, onUnlock, stopCamera, retryCount]);
+  }, [enrolledFace, handleSuccessfulUnlock, isEnrolled, stopCamera, retryCount]);
 
-  const handlePasswordUnlock = (e: React.FormEvent) => {
+  // Account password unlock fallback (verifies against real account password)
+  const handlePasswordUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fallbackInput.trim()) {
-      setFallbackError('Please enter your account password or PIN');
+      setFallbackError('Please enter your account password');
       return;
     }
-    handleSuccessfulUnlock();
+
+    setFallbackError(null);
+    setIsVerifyingPassword(true);
+
+    try {
+      const supabase = getSupabaseClient();
+      if (supabase && user?.email) {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: user.email,
+          password: fallbackInput,
+        });
+
+        if (error) {
+          setFallbackError('Incorrect password. Please try again.');
+          setIsVerifyingPassword(false);
+          return;
+        }
+      }
+
+      handleSuccessfulUnlock();
+    } catch {
+      setFallbackError('Password verification failed. Please try again.');
+    } finally {
+      setIsVerifyingPassword(false);
+    }
   };
 
   return (
@@ -228,7 +314,7 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
             <ScanFace className="h-6 w-6" />
           </div>
           <h1 className="text-lg font-bold tracking-tight text-white">SafeChat Face Lock</h1>
-          <p className="text-xs text-slate-400">Continuous Biometric Protection</p>
+          <p className="text-xs text-slate-400">Continuous Biometric Verification</p>
         </div>
 
         {/* Biometric Scanner Viewfinder */}
@@ -260,12 +346,25 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
                   autoPlay
                   playsInline
                   muted
-                  className="h-full w-full object-cover transform -scale-x-100"
+                  className="h-full w-full object-cover transform scale-x-[-1]"
                 />
-                <canvas ref={canvasRef} className="hidden" />
 
-                {!isUnlocked && (
-                  <div className="absolute inset-0 border-2 border-emerald-500/50 rounded-full animate-pulse pointer-events-none" />
+                {/* Real-time Facial Landmark Overlay Canvas */}
+                <canvas
+                  ref={overlayCanvasRef}
+                  width={224}
+                  height={224}
+                  className="pointer-events-none absolute inset-0 h-full w-full object-cover z-10"
+                />
+
+                {!isUnlocked && isFaceDetected && (
+                  <div
+                    className={`absolute inset-0 border-2 rounded-full pointer-events-none transition-colors duration-200 ${
+                      matchPercentage !== null && matchPercentage >= 80
+                        ? 'border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.6)] animate-pulse'
+                        : 'border-rose-500/80 shadow-[0_0_15px_rgba(244,63,94,0.4)]'
+                    }`}
+                  />
                 )}
 
                 {!isUnlocked && (
@@ -273,7 +372,7 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
                 )}
 
                 {isUnlocked && (
-                  <div className="absolute inset-0 bg-emerald-950/80 backdrop-blur-xs flex items-center justify-center animate-in zoom-in duration-300">
+                  <div className="absolute inset-0 bg-emerald-950/80 backdrop-blur-xs flex items-center justify-center animate-in zoom-in duration-300 z-20">
                     <CheckCircle2 className="h-16 w-16 text-emerald-400" />
                   </div>
                 )}
@@ -281,29 +380,27 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
             )}
           </div>
 
-          {similarity !== null && !isUnlocked && (
-            <div className="mt-3 flex items-center gap-1.5 rounded-full bg-slate-800/90 px-3 py-1 text-xs text-emerald-400 border border-slate-700 font-mono">
+          {/* Biometric Status Indicator */}
+          {matchPercentage !== null && !isUnlocked && (
+            <div
+              className={`mt-3 flex items-center gap-1.5 rounded-full px-3.5 py-1 text-xs font-mono font-semibold border ${
+                matchPercentage >= 80
+                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
+                  : 'bg-rose-950/80 text-rose-300 border-rose-500/40'
+              }`}
+            >
               <ScanFace className="h-3.5 w-3.5" />
-              <span>Similarity: {(similarity * 100).toFixed(0)}%</span>
+              <span>
+                {matchPercentage >= 80
+                  ? `Owner Match: ${matchPercentage}%`
+                  : `Mismatch: ${matchPercentage}% (Unauthorized)`}
+              </span>
             </div>
           )}
 
-          <p className="mt-2 text-xs text-slate-300 text-center font-medium max-w-xs">
+          <p className="mt-2 text-xs text-slate-300 text-center font-medium max-w-xs px-2">
             {statusMessage}
           </p>
-
-          {/* Instant Unlock Button (So the user is never stuck if scanning takes a few seconds) */}
-          {!isUnlocked && (
-            <button
-              type="button"
-              onClick={handleSuccessfulUnlock}
-              className="mt-3 flex items-center gap-1.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 px-3.5 py-1 text-xs font-semibold transition-all active:scale-95 shadow-sm"
-              title="Instant unlock for device owner"
-            >
-              <Zap className="h-3.5 w-3.5" />
-              <span>⚡ Instant Unlock</span>
-            </button>
-          )}
         </div>
 
         {/* Password Fallback View */}
@@ -311,7 +408,7 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
           <form onSubmit={handlePasswordUnlock} className="w-full space-y-3">
             <div>
               <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider block mb-1">
-                Account Password or PIN
+                Account Password
               </label>
               <input
                 type="password"
@@ -329,17 +426,27 @@ export const FaceLockScreen: React.FC<FaceLockScreenProps> = ({ userId, onUnlock
             <div className="flex gap-2">
               <button
                 type="submit"
-                className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 transition-colors shadow-md"
+                disabled={isVerifyingPassword}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 transition-colors shadow-md disabled:opacity-60"
               >
-                Unlock
+                {isVerifyingPassword ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Verifying...</span>
+                  </>
+                ) : (
+                  <span>Unlock</span>
+                )}
               </button>
-              <button
-                type="button"
-                onClick={() => setShowPasswordFallback(false)}
-                className="rounded-xl bg-slate-800 py-2.5 px-3 text-xs text-slate-400 hover:text-white transition-colors"
-              >
-                Use Face
-              </button>
+              {isEnrolled && (
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordFallback(false)}
+                  className="rounded-xl bg-slate-800 py-2.5 px-3 text-xs text-slate-400 hover:text-white transition-colors"
+                >
+                  Use Face
+                </button>
+              )}
             </div>
           </form>
         ) : (

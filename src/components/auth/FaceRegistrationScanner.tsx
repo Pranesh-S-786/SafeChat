@@ -99,13 +99,58 @@ export const FaceRegistrationScanner: React.FC<FaceRegistrationScannerProps> = (
     }
   };
 
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+
   const startScanningLoop = async () => {
     const landmarker = await initFaceLandmarker();
     if (!landmarker) return;
 
-    let stableFrames = 0;
-    const REQUIRED_STABLE_FRAMES = 12; // ~0.4 second of stable centered landmark capture
+    let accumulatedDescriptors: number[][] = [];
+    const REQUIRED_STABLE_FRAMES = 36; // Thorough multi-frame baseline averaging (~3.5 seconds)
     let lastVideoTime = -1;
+
+    const drawBiometricMesh = (
+      ctx: CanvasRenderingContext2D,
+      landmarks: any[],
+      width: number,
+      height: number,
+      isTrackingGood: boolean
+    ) => {
+      ctx.clearRect(0, 0, width, height);
+
+      const POINTS = [
+        33, 133, 159, 145, 263, 362, 386, 374, // eyes
+        70, 63, 105, 300, 293, 334, // brows
+        1, 2, 4, 168, 195, // nose
+        61, 291, 0, 17, 13, 14, // lips
+        10, 152, 234, 454, 172, 397 // contour bounds
+      ];
+
+      ctx.fillStyle = isTrackingGood ? '#10b981' : '#f59e0b';
+      ctx.shadowColor = isTrackingGood ? 'rgba(16, 185, 129, 0.8)' : 'rgba(245, 158, 11, 0.8)';
+      ctx.shadowBlur = 4;
+
+      for (const idx of POINTS) {
+        const pt = landmarks[idx];
+        if (!pt) continue;
+        const x = (1 - pt.x) * width;
+        const y = pt.y * height;
+        ctx.beginPath();
+        ctx.arc(x, y, 2.2, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = isTrackingGood ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)';
+      ctx.lineWidth = 1;
+
+      if (landmarks[33] && landmarks[263]) {
+        ctx.beginPath();
+        ctx.moveTo((1 - landmarks[33].x) * width, landmarks[33].y * height);
+        ctx.lineTo((1 - landmarks[263].x) * width, landmarks[263].y * height);
+        ctx.stroke();
+      }
+    };
 
     const loop = () => {
       if (!streamRef.current) return;
@@ -116,6 +161,8 @@ export const FaceRegistrationScanner: React.FC<FaceRegistrationScannerProps> = (
         canvas = document.createElement('canvas');
         canvasRef.current = canvas;
       }
+      const overlayCanvas = overlayCanvasRef.current;
+      const overlayCtx = overlayCanvas?.getContext('2d');
 
       if (!video) {
         animationFrameRef.current = requestAnimationFrame(loop);
@@ -158,9 +205,10 @@ export const FaceRegistrationScanner: React.FC<FaceRegistrationScannerProps> = (
 
           // Multi-face check
           if (faces.length > 1) {
+            if (overlayCtx) overlayCtx.clearRect(0, 0, 320, 320);
             setMultiFaceWarning('Multiple faces detected. Ensure only you are visible.');
             setStatusMessage('Security check: Only 1 person permitted in frame.');
-            stableFrames = 0;
+            accumulatedDescriptors = [];
             setScanProgress(0);
             animationFrameRef.current = requestAnimationFrame(loop);
             return;
@@ -168,9 +216,8 @@ export const FaceRegistrationScanner: React.FC<FaceRegistrationScannerProps> = (
           setMultiFaceWarning(null);
 
           if (faces.length === 0) {
-            setStatusMessage('Position your face inside the scanning guide.');
-            stableFrames = Math.max(0, stableFrames - 1);
-            setScanProgress(Math.round((stableFrames / REQUIRED_STABLE_FRAMES) * 100));
+            if (overlayCtx) overlayCtx.clearRect(0, 0, 320, 320);
+            setStatusMessage('Position your face inside the oval scanning guide.');
             animationFrameRef.current = requestAnimationFrame(loop);
             return;
           }
@@ -180,31 +227,62 @@ export const FaceRegistrationScanner: React.FC<FaceRegistrationScannerProps> = (
           try {
             const { descriptor, eyeDistance } = extractLandmarkDescriptor(landmarks);
 
-            if (eyeDistance < 0.05) {
+            if (eyeDistance < 0.06) {
+              if (overlayCtx) drawBiometricMesh(overlayCtx, landmarks, 320, 320, false);
               setStatusMessage('Please move slightly closer to the camera.');
-              stableFrames = Math.max(0, stableFrames - 1);
-              setScanProgress(Math.round((stableFrames / REQUIRED_STABLE_FRAMES) * 100));
               animationFrameRef.current = requestAnimationFrame(loop);
               return;
             }
 
-            stableFrames++;
-            const progress = Math.min(100, Math.round((stableFrames / REQUIRED_STABLE_FRAMES) * 100));
-            setScanProgress(progress);
-            setStatusMessage(`Extracting 64-D facial landmark pattern (${progress}%)... Hold steady.`);
+            // Head pose check: ensure user is facing forward
+            const leftEyeOuter = landmarks[33];
+            const rightEyeOuter = landmarks[263];
+            const noseTip = landmarks[1];
+            const distNoseToLeft = Math.abs(noseTip.x - leftEyeOuter.x);
+            const distNoseToRight = Math.abs(rightEyeOuter.x - noseTip.x);
+            const yawRatio = distNoseToRight > 0.001 ? distNoseToLeft / distNoseToRight : 1.0;
 
-            if (stableFrames >= REQUIRED_STABLE_FRAMES) {
+            if (yawRatio < 0.70 || yawRatio > 1.45) {
+              if (overlayCtx) drawBiometricMesh(overlayCtx, landmarks, 320, 320, false);
+              setStatusMessage('Align head straight facing the camera (no tilt)...');
+              animationFrameRef.current = requestAnimationFrame(loop);
+              return;
+            }
+
+            // Frame is stable and verified: draw active tracking mesh
+            if (overlayCtx) drawBiometricMesh(overlayCtx, landmarks, 320, 320, true);
+
+            accumulatedDescriptors.push(descriptor);
+            const progress = Math.min(100, Math.round((accumulatedDescriptors.length / REQUIRED_STABLE_FRAMES) * 100));
+            setScanProgress(progress);
+            setStatusMessage(`Extracting high-precision biometric pattern (${progress}%)... Hold steady.`);
+
+            if (accumulatedDescriptors.length >= REQUIRED_STABLE_FRAMES) {
+              // Master template: compute element-wise average across all stable frames
+              const averaged: number[] = new Array(64).fill(0);
+              for (const desc of accumulatedDescriptors) {
+                for (let i = 0; i < 64; i++) {
+                  averaged[i] += desc[i];
+                }
+              }
+              let normSq = 0;
+              for (let i = 0; i < 64; i++) {
+                averaged[i] /= accumulatedDescriptors.length;
+                normSq += averaged[i] * averaged[i];
+              }
+              const norm = Math.sqrt(normSq) || 1;
+              const masterTemplate = averaged.map((v) => v / norm);
+
               // Snapshot thumbnail
-              const previewUrl = canvas.toDataURL('image/jpeg', 0.8);
+              const previewUrl = canvas.toDataURL('image/jpeg', 0.85);
               stopCamera();
-              onPatternCaptured(descriptor, previewUrl);
-              setStatusMessage('✓ Facial biometric pattern captured and stored locally!');
+              onPatternCaptured(masterTemplate, previewUrl);
+              setStatusMessage('✓ High-precision facial biometric pattern established and stored!');
               return;
             }
           } catch {
+            if (overlayCtx) overlayCtx.clearRect(0, 0, 320, 320);
             setStatusMessage('Analyzing facial geometry... Keep face centered.');
-            stableFrames = Math.max(0, stableFrames - 1);
-            setScanProgress(Math.round((stableFrames / REQUIRED_STABLE_FRAMES) * 100));
           }
         }
       }
@@ -344,6 +422,12 @@ export const FaceRegistrationScanner: React.FC<FaceRegistrationScannerProps> = (
                 className="h-full w-full object-cover transform scale-x-[-1]"
               />
               <canvas ref={canvasRef} className="hidden" />
+              <canvas
+                ref={overlayCanvasRef}
+                width={320}
+                height={320}
+                className="pointer-events-none absolute inset-0 h-full w-full object-cover z-10"
+              />
 
               {/* Scanning reticle / guide overlay */}
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">

@@ -23,6 +23,8 @@ import {
   extractLandmarkDescriptor,
   initFaceLandmarker,
   extractFaceDescriptorFromImageFile,
+  getBiometricMatchPercentage,
+  BIOMETRIC_MATCH_THRESHOLD,
 } from '../../lib/faceVerification';
 import { KeystrokeCollector } from '../../lib/keystroke';
 import { evaluateMessageWithAIJury } from '../../lib/aiJury';
@@ -175,15 +177,15 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
             try {
               const { descriptor } = extractLandmarkDescriptor(faces[0]);
               const similarity = computeBiometricSimilarity(enrolledFace.templateVector, descriptor);
-              setFaceComparisonScore(similarity);
-              const matchPct = Math.round(similarity * 100);
+              const matchPct = getBiometricMatchPercentage(similarity);
+              setFaceComparisonScore(matchPct / 100);
 
-              if (similarity >= 0.70) {
+              if (similarity >= BIOMETRIC_MATCH_THRESHOLD) {
                 setFaceComparisonVerdict('verified');
-                setFaceComparisonMsg(`✓ Identity Confirmed (${matchPct}% match). Live face matches the pattern stored at account creation!`);
+                setFaceComparisonMsg(`✓ Identity Confirmed (${matchPct}% match). Live face matches pattern stored at account creation!`);
               } else {
                 setFaceComparisonVerdict('failed');
-                setFaceComparisonMsg(`❌ Identity Mismatch (${matchPct}% match, threshold 70%). Live face does not match stored pattern.`);
+                setFaceComparisonMsg(`❌ Identity Mismatch (${matchPct}% match). Live face does not match stored pattern.`);
               }
             } catch {
               setFaceComparisonMsg('Analyzing facial landmarks... Keep centered.');
@@ -213,15 +215,15 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
     try {
       const { descriptor } = await extractFaceDescriptorFromImageFile(file);
       const similarity = computeBiometricSimilarity(enrolledFace.templateVector, descriptor);
-      setFaceComparisonScore(similarity);
-      const matchPct = Math.round(similarity * 100);
+      const matchPct = getBiometricMatchPercentage(similarity);
+      setFaceComparisonScore(matchPct / 100);
 
-      if (similarity >= 0.70) {
+      if (similarity >= BIOMETRIC_MATCH_THRESHOLD) {
         setFaceComparisonVerdict('verified');
         setFaceComparisonMsg(`✓ Photo Verified (${matchPct}% match). Matches pattern stored at account creation!`);
       } else {
         setFaceComparisonVerdict('failed');
-        setFaceComparisonMsg(`❌ Photo Mismatch (${matchPct}% match, threshold 70%). Photo does not match stored pattern.`);
+        setFaceComparisonMsg(`❌ Photo Mismatch (${matchPct}% match). Photo does not match stored pattern.`);
       }
     } catch (err) {
       setFaceComparisonMsg(err instanceof Error ? err.message : 'Photo processing failed.');
