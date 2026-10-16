@@ -14,6 +14,9 @@ import {
   Video,
   VideoOff,
   Loader2,
+  Trash2,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -43,7 +46,7 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
   onOpenFaceEnroll,
 }) => {
   const { user, keyPair } = useAuth();
-  const [activeTab, setActiveTab] = useState<'e2ee' | 'keystroke' | 'face' | 'aijury' | 'supabase'>('e2ee');
+  const [activeTab, setActiveTab] = useState<'e2ee' | 'keystroke' | 'face' | 'aijury' | 'supabase' | 'danger'>('e2ee');
 
   // Keystroke state
   const collector = user ? new KeystrokeCollector(user.id) : null;
@@ -74,6 +77,55 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
   const [sbUrl, setSbUrl] = useState(creds.url);
   const [sbKey, setSbKey] = useState(creds.anonKey);
   const [sbSaved, setSbSaved] = useState(false);
+
+  // Data Wipe & Reset state
+  const [isWiping, setIsWiping] = useState(false);
+  const [wipeSuccess, setWipeSuccess] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
+
+  const resetSqlScript = `-- 1. Delete all users from Supabase auth (cascades to public.profiles, messages, participants, challenges)
+DELETE FROM auth.users;
+
+-- 2. Clear any orphaned conversations
+DELETE FROM public.conversations;
+
+-- 3. Verify clean state (all count to 0)
+SELECT count(*) AS remaining_auth_users FROM auth.users;
+SELECT count(*) AS remaining_profiles FROM public.profiles;
+SELECT count(*) AS remaining_conversations FROM public.conversations;
+SELECT count(*) AS remaining_messages FROM public.messages;`;
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(resetSqlScript);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 2000);
+  };
+
+  const handleWipeLocalData = async () => {
+    if (!window.confirm('Are you sure you want to wipe ALL local user data from this browser?\\n\\nThis will permanently delete:\\n• All biometric facial templates & baseline vectors\\n• Keystroke biometric timing profiles\\n• E2EE WebCrypto private keys (SafeChat_KeyStore_v1)\\n• Decrypted cached chat messages & recent emojis\\n• Current authentication and session tokens\\n\\nThe app will reload to a pristine state.')) {
+      return;
+    }
+
+    setIsWiping(true);
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+      await new Promise<void>((resolve) => {
+        const req = indexedDB.deleteDatabase('SafeChat_KeyStore_v1');
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+        req.onblocked = () => resolve();
+      });
+
+      setWipeSuccess(true);
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (err) {
+      console.error('Failed to wipe local data:', err);
+      setIsWiping(false);
+    }
+  };
 
   const enrolledFace = user ? getEnrolledFaceProfile(user.id) : null;
 
@@ -331,6 +383,16 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
           >
             <Database className="h-3.5 w-3.5" />
             <span>Supabase</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('danger')}
+            className={`flex-1 rounded-lg py-2 font-medium transition-colors flex items-center justify-center gap-1.5 ${
+              activeTab === 'danger' ? 'bg-rose-950/80 text-rose-300 border border-rose-800/80 shadow' : 'text-slate-400 hover:text-rose-400'
+            }`}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            <span>Reset Data</span>
           </button>
         </div>
 
@@ -746,6 +808,109 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
                 </button>
               </div>
             </form>
+          )}
+
+          {/* TAB 6: DANGER ZONE / DATA RESET */}
+          {activeTab === 'danger' && (
+            <div className="space-y-4">
+              {/* Local Storage & Biometric Wipe */}
+              <div className="rounded-2xl border border-rose-900/60 bg-rose-950/20 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="rounded-lg bg-rose-900/50 p-1.5 text-rose-300">
+                    <Trash2 className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-rose-200">Wipe Local Browser Storage & Biometrics</h4>
+                    <p className="text-[11px] text-slate-400">Permanently clears biometric templates, private keys, and cached data on this device.</p>
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-slate-950/70 p-3 text-[11px] text-slate-300 space-y-1 border border-slate-800">
+                  <div className="font-semibold text-slate-200 mb-1">This will permanently purge from your browser:</div>
+                  <ul className="list-disc pl-4 space-y-0.5 text-slate-400">
+                    <li>All enrolled face landmarks & biometric templates (<code className="text-rose-300">safechat_face_*</code>)</li>
+                    <li>Keystroke dynamics timing vectors & baselines (<code className="text-rose-300">safechat_keystroke_*</code>)</li>
+                    <li>End-to-End Encryption WebCrypto keys in IndexedDB (<code className="text-rose-300">SafeChat_KeyStore_v1</code>)</li>
+                    <li>Decrypted message cache (<code className="text-rose-300">safechat_cached_msg_*</code>) & recent emojis</li>
+                    <li>Supabase session & authentication tokens</li>
+                  </ul>
+                </div>
+
+                {wipeSuccess ? (
+                  <div className="flex items-center gap-2 rounded-xl bg-emerald-950/60 border border-emerald-800/80 p-3 text-emerald-200 text-xs">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                    <span>All local data wiped successfully. Reloading application...</span>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isWiping}
+                    onClick={handleWipeLocalData}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 font-bold text-white hover:bg-rose-500 transition-colors shadow-lg shadow-rose-900/20 disabled:opacity-50"
+                  >
+                    {isWiping ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Purging All Local Storage...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="h-4 w-4" />
+                        <span>Wipe All Local Storage & Biometric Keys</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+
+              {/* Supabase Cloud Database Purge */}
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-lg bg-amber-900/40 p-1.5 text-amber-300">
+                      <Database className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-slate-200">Supabase Cloud Database Purge</h4>
+                      <p className="text-[11px] text-slate-400">PostgreSQL RLS restricts client apps from mass-dropping users. Run this script in Supabase:</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCopySql}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-700 transition-colors"
+                  >
+                    {copiedSql ? (
+                      <>
+                        <Check className="h-3.5 w-3.5 text-emerald-400" />
+                        <span className="text-emerald-400">Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5" />
+                        <span>Copy SQL</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="relative rounded-xl border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] text-emerald-400 overflow-x-auto">
+                  <pre>{resetSqlScript}</pre>
+                </div>
+
+                <div className="text-[11px] text-slate-400 space-y-1">
+                  <div><strong>How to execute:</strong></div>
+                  <ol className="list-decimal pl-4 space-y-0.5 text-slate-400">
+                    <li>Open your project at <strong>supabase.com/dashboard</strong></li>
+                    <li>Click <strong>SQL Editor</strong> in the left sidebar</li>
+                    <li>Paste the copied script and click <strong>Run</strong></li>
+                  </ol>
+                  <p className="text-slate-500 pt-1">
+                    * Foreign keys have <code className="text-slate-400">ON DELETE CASCADE</code> configured, so deleting from <code className="text-slate-400">auth.users</code> automatically purges all profiles, messages, participants, and biometric challenges.
+                  </p>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>
