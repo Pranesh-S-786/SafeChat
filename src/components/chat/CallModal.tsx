@@ -16,10 +16,12 @@ import { playRingingTone } from '../../lib/notifications';
 interface CallModalProps {
   isOpen: boolean;
   onClose: () => void;
-  recipient: Profile | null;
+  recipient: Profile | { id?: string; display_name?: string; avatar_url?: string } | null;
   callType: 'voice' | 'video';
   isGroup?: boolean;
   groupName?: string;
+  isCaller?: boolean;
+  statusOverride?: 'ringing' | 'connected' | 'ended';
 }
 
 export const CallModal: React.FC<CallModalProps> = ({
@@ -29,8 +31,12 @@ export const CallModal: React.FC<CallModalProps> = ({
   callType,
   isGroup,
   groupName,
+  isCaller = true,
+  statusOverride,
 }) => {
-  const [callStatus, setCallStatus] = useState<'ringing' | 'connected' | 'ended'>('ringing');
+  const [callStatus, setCallStatus] = useState<'ringing' | 'connected' | 'ended'>(
+    statusOverride || (isCaller ? 'ringing' : 'connected')
+  );
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(callType === 'video');
@@ -44,6 +50,13 @@ export const CallModal: React.FC<CallModalProps> = ({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
 
+  // Sync statusOverride
+  useEffect(() => {
+    if (statusOverride) {
+      setCallStatus(statusOverride);
+    }
+  }, [statusOverride]);
+
   // Ringing & Connection lifecycle
   useEffect(() => {
     if (!isOpen) {
@@ -53,23 +66,22 @@ export const CallModal: React.FC<CallModalProps> = ({
       return;
     }
 
-    setCallStatus('ringing');
+    const currentSt = statusOverride || (isCaller ? 'ringing' : 'connected');
+    setCallStatus(currentSt);
     setDuration(0);
     setMediaError(null);
 
-    const stopRinging = playRingingTone();
-
-    // Transition from ringing to connected after 2.4 seconds
-    const connectTimer = window.setTimeout(() => {
-      stopRinging();
-      setCallStatus('connected');
-    }, 2400);
+    let stopRinging: (() => void) | null = null;
+    if (currentSt === 'ringing') {
+      stopRinging = playRingingTone();
+    }
 
     return () => {
-      stopRinging();
-      clearTimeout(connectTimer);
+      if (stopRinging) {
+        stopRinging();
+      }
     };
-  }, [isOpen]);
+  }, [isOpen, isCaller, statusOverride]);
 
   // Call duration counter
   useEffect(() => {

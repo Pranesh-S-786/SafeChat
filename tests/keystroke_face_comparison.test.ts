@@ -25,26 +25,27 @@ describe('Account Registration Face Pattern Storage & Keystroke Comparison Test 
     const ty = options?.translateY ?? 0;
     const variation = options?.variation ?? 0;
 
+    const s = eyeDist / 0.2;
     const landmarks: Array<{ x: number; y: number; z: number }> = [];
     for (let i = 0; i < 478; i++) {
-      landmarks.push({ x: 0.5 + tx, y: 0.5 + ty, z: 0 });
+      landmarks.push({ x: 0.5 + tx, y: 0.45 + ty, z: 0 });
     }
 
     landmarks[33] = { x: 0.5 - eyeDist / 2 + tx, y: 0.45 + ty, z: 0 };
     landmarks[133] = { x: 0.5 - eyeDist / 4 + tx, y: 0.45 + ty, z: 0 };
-    landmarks[159] = { x: 0.5 - eyeDist / 3 + tx, y: 0.44 + ty, z: 0 };
-    landmarks[145] = { x: 0.5 - eyeDist / 3 + tx, y: 0.46 + ty, z: 0 };
+    landmarks[159] = { x: 0.5 - eyeDist / 3 + tx, y: 0.45 - 0.01 * s + ty, z: 0 };
+    landmarks[145] = { x: 0.5 - eyeDist / 3 + tx, y: 0.45 + 0.01 * s + ty, z: 0 };
 
     landmarks[263] = { x: 0.5 + eyeDist / 2 + tx, y: 0.45 + ty, z: 0 };
     landmarks[362] = { x: 0.5 + eyeDist / 4 + tx, y: 0.45 + ty, z: 0 };
-    landmarks[386] = { x: 0.5 + eyeDist / 3 + tx, y: 0.44 + ty, z: 0 };
-    landmarks[374] = { x: 0.5 + eyeDist / 3 + tx, y: 0.46 + ty, z: 0 };
+    landmarks[386] = { x: 0.5 + eyeDist / 3 + tx, y: 0.45 - 0.01 * s + ty, z: 0 };
+    landmarks[374] = { x: 0.5 + eyeDist / 3 + tx, y: 0.45 + 0.01 * s + ty, z: 0 };
 
-    landmarks[1] = { x: 0.5 + tx + variation, y: 0.52 + ty, z: -0.05 };
-    landmarks[152] = { x: 0.5 + tx, y: 0.72 + ty + variation, z: 0 };
-    landmarks[10] = { x: 0.5 + tx, y: 0.28 + ty, z: 0 };
-    landmarks[61] = { x: 0.44 + tx, y: 0.62 + ty, z: 0 };
-    landmarks[291] = { x: 0.56 + tx, y: 0.62 + ty, z: 0 };
+    landmarks[1] = { x: 0.5 + tx + variation, y: 0.45 + 0.07 * s + ty, z: -0.05 * s };
+    landmarks[152] = { x: 0.5 + tx, y: 0.45 + 0.27 * s + ty + variation, z: 0 };
+    landmarks[10] = { x: 0.5 + tx, y: 0.45 - 0.17 * s + ty, z: 0 };
+    landmarks[61] = { x: 0.5 - 0.06 * s + tx, y: 0.45 + 0.17 * s + ty, z: 0 };
+    landmarks[291] = { x: 0.5 + 0.06 * s + tx, y: 0.45 + 0.17 * s + ty, z: 0 };
 
     return landmarks;
   };

@@ -58,6 +58,7 @@ interface ChatMainProps {
   onBack?: () => void;
   onDeleteMessage?: (messageId: string) => Promise<void>;
   onClearLegacyMessages?: () => Promise<void>;
+  onStartCall?: (callType: 'voice' | 'video') => void;
 }
 
 export const ChatMain: React.FC<ChatMainProps> = ({
@@ -75,6 +76,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   onBack,
   onDeleteMessage,
   onClearLegacyMessages,
+  onStartCall,
 }) => {
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -398,10 +400,14 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           <button
             type="button"
             onClick={() => {
-              setCallType('voice');
-              setIsCallOpen(true);
+              if (onStartCall) {
+                onStartCall('voice');
+              } else {
+                setCallType('voice');
+                setIsCallOpen(true);
+              }
             }}
-            className="rounded-full p-2 text-slate-600 hover:bg-slate-100 transition-colors"
+            className="rounded-full p-2 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
             title="Voice Call"
           >
             <Phone className="h-4 w-4" />
@@ -410,10 +416,14 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           <button
             type="button"
             onClick={() => {
-              setCallType('video');
-              setIsCallOpen(true);
+              if (onStartCall) {
+                onStartCall('video');
+              } else {
+                setCallType('video');
+                setIsCallOpen(true);
+              }
             }}
-            className="rounded-full p-2 text-slate-600 hover:bg-slate-100 transition-colors"
+            className="rounded-full p-2 text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
             title="Video Call"
           >
             <Video className="h-4 w-4" />
@@ -906,14 +916,16 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       </div>
 
       {/* Voice / Video Call Modal */}
-      <CallModal
-        isOpen={isCallOpen}
-        onClose={() => setIsCallOpen(false)}
-        recipient={recipient}
-        callType={callType}
-        isGroup={isGroup}
-        groupName={conversation.group_name}
-      />
+      {!onStartCall && (
+        <CallModal
+          isOpen={isCallOpen}
+          onClose={() => setIsCallOpen(false)}
+          recipient={recipient}
+          callType={callType}
+          isGroup={isGroup}
+          groupName={conversation.group_name}
+        />
+      )}
     </div>
   );
 };

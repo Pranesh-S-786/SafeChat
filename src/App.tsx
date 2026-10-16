@@ -15,6 +15,8 @@ import { NewChatModal } from './components/chat/NewChatModal';
 import { SuspiciousTypingAlertModal } from './components/security/SuspiciousTypingAlertModal';
 import { FaceLockScreen } from './components/security/FaceLockScreen';
 import { ProfileModal } from './components/profile/ProfileModal';
+import { CallModal } from './components/chat/CallModal';
+import { IncomingCallModal } from './components/chat/IncomingCallModal';
 import { getEnrolledFaceProfile } from './lib/faceVerification';
 import {
   createVerificationChallenge,
@@ -43,12 +45,13 @@ import type {
   FileMetadata,
   KeystrokeRiskReport,
   MessageType,
+  Profile,
   RawMessage,
   VerificationChallenge,
 } from './lib/types';
 
 const SafeChatProductionApp: React.FC = () => {
-  const { user, keyPair, isLoading } = useAuth();
+  const { user, profile, keyPair, isLoading } = useAuth();
 
   // Landing page vs app view state
   const [viewMode, setViewMode] = useState<'landing' | 'auth' | 'app'>('landing');
@@ -88,6 +91,24 @@ const SafeChatProductionApp: React.FC = () => {
     status: 'verified' | 'failed' | 'rejected';
     accuracy: number;
     contactName: string;
+  } | null>(null);
+
+  // Real-time Audio/Video Calling State
+  const [incomingCall, setIncomingCall] = useState<{
+    callId: string;
+    caller: { id: string; display_name: string; avatar_url?: string };
+    callType: 'voice' | 'video';
+    conversationId: string;
+  } | null>(null);
+
+  const [activeCall, setActiveCall] = useState<{
+    callId: string;
+    peer: Profile | { id: string; display_name: string; avatar_url?: string };
+    callType: 'voice' | 'video';
+    isCaller: boolean;
+    status: 'ringing' | 'connected' | 'ended';
+    isGroup?: boolean;
+    groupName?: string;
   } | null>(null);
 
   // Browser History & Navigation Support (Back button & hash navigation)
@@ -676,10 +697,173 @@ const SafeChatProductionApp: React.FC = () => {
       )
       .subscribe();
 
+    const callChannel = supabase
+      .channel(`calls:${user.id}`)
+      .on('broadcast', { event: 'incoming_call' }, (event) => {
+        const payload = event.payload as {
+          callId: string;
+          caller: { id: string; display_name: string; avatar_url?: string };
+          callType: 'voice' | 'video';
+          conversationId: string;
+        };
+        if (payload && payload.caller && payload.caller.id !== user.id) {
+          playMessageChime();
+          showDesktopNotification(`Incoming ${payload.callType === 'video' ? 'Video' : 'Voice'} Call`, {
+            body: `${payload.caller.display_name} is calling you on SafeChat...`,
+          });
+          setIncomingCall({
+            callId: payload.callId,
+            caller: payload.caller,
+            callType: payload.callType,
+            conversationId: payload.conversationId,
+          });
+        }
+      })
+      .on('broadcast', { event: 'call_accepted' }, (event) => {
+        const payload = event.payload as { callId: string };
+        setActiveCall((prev) => {
+          if (prev && prev.callId === payload.callId) {
+            return { ...prev, status: 'connected' };
+          }
+          return prev;
+        });
+      })
+      .on('broadcast', { event: 'call_declined' }, () => {
+        setActiveCall((prev) => (prev ? { ...prev, status: 'ended' } : null));
+        setTimeout(() => setActiveCall(null), 1200);
+      })
+      .on('broadcast', { event: 'call_ended' }, () => {
+        setActiveCall(null);
+        setIncomingCall(null);
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(challengeChannel);
+      supabase.removeChannel(callChannel);
     };
   }, [user, conversations, recipient]);
+
+  // Real-time Calling Handlers
+  const handleStartCall = async (callType: 'voice' | 'video') => {
+    const supabase = getSupabaseClient();
+    if (!recipient || !user || !supabase) return;
+
+    const callId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+    setActiveCall({
+      callId,
+      peer: recipient,
+      callType,
+      isCaller: true,
+      status: 'ringing',
+      isGroup: Boolean(activeConversation?.is_group),
+      groupName: activeConversation?.group_name,
+    });
+
+    const targetChannel = supabase.channel(`calls:${recipient.id}`);
+    targetChannel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        targetChannel.send({
+          type: 'broadcast',
+          event: 'incoming_call',
+          payload: {
+            callId,
+            caller: {
+              id: user.id,
+              display_name: profile?.display_name || user.email?.split('@')[0] || 'SafeChat User',
+              avatar_url: profile?.avatar_url,
+            },
+            callType,
+            conversationId: selectedConversationId,
+          },
+        });
+      }
+    });
+  };
+
+  const handleAcceptCall = async () => {
+    const supabase = getSupabaseClient();
+    if (!incomingCall || !user || !supabase) return;
+
+    const { callId, caller, callType, conversationId } = incomingCall;
+
+    if (conversationId && conversationId !== selectedConversationId) {
+      setSelectedConversationId(conversationId);
+    }
+
+    setActiveCall({
+      callId,
+      peer: caller,
+      callType,
+      isCaller: false,
+      status: 'connected',
+    });
+
+    setIncomingCall(null);
+
+    const targetChannel = supabase.channel(`calls:${caller.id}`);
+    targetChannel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        targetChannel.send({
+          type: 'broadcast',
+          event: 'call_accepted',
+          payload: {
+            callId,
+            responderId: user.id,
+          },
+        });
+      }
+    });
+  };
+
+  const handleDeclineCall = async () => {
+    const supabase = getSupabaseClient();
+    if (!incomingCall || !user || !supabase) return;
+
+    const { callId, caller } = incomingCall;
+    setIncomingCall(null);
+
+    const targetChannel = supabase.channel(`calls:${caller.id}`);
+    targetChannel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        targetChannel.send({
+          type: 'broadcast',
+          event: 'call_declined',
+          payload: {
+            callId,
+          },
+        });
+      }
+    });
+  };
+
+  const handleEndActiveCall = async () => {
+    const supabase = getSupabaseClient();
+    if (!activeCall || !user) {
+      setActiveCall(null);
+      return;
+    }
+
+    const peerId = activeCall.peer.id;
+    const callId = activeCall.callId;
+    setActiveCall(null);
+
+    if (peerId && supabase) {
+      const targetChannel = supabase.channel(`calls:${peerId}`);
+      targetChannel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          targetChannel.send({
+            type: 'broadcast',
+            event: 'call_ended',
+            payload: {
+              callId,
+            },
+          });
+        }
+      });
+    }
+  };
 
   // Count suspicious typing messages from active recipient
   const suspiciousFromSenderCount = recipient
@@ -829,6 +1013,7 @@ const SafeChatProductionApp: React.FC = () => {
           onBack={handleBackFromChat}
           onDeleteMessage={handleDeleteMessage}
           onClearLegacyMessages={handleClearLegacyMessages}
+          onStartCall={handleStartCall}
         />
       </main>
 
@@ -926,6 +1111,31 @@ const SafeChatProductionApp: React.FC = () => {
             setFaceResultNotification(null);
             handleOpenFaceVerification();
           }}
+        />
+      )}
+
+      {/* 9. Incoming Real-Time Call Modal */}
+      {incomingCall && (
+        <IncomingCallModal
+          isOpen={Boolean(incomingCall)}
+          caller={incomingCall.caller}
+          callType={incomingCall.callType}
+          onAccept={handleAcceptCall}
+          onDecline={handleDeclineCall}
+        />
+      )}
+
+      {/* 10. Active Voice / Video Call Modal */}
+      {activeCall && (
+        <CallModal
+          isOpen={Boolean(activeCall)}
+          onClose={handleEndActiveCall}
+          recipient={activeCall.peer as Profile}
+          callType={activeCall.callType}
+          isGroup={activeCall.isGroup}
+          groupName={activeCall.groupName}
+          isCaller={activeCall.isCaller}
+          statusOverride={activeCall.status}
         />
       )}
     </div>

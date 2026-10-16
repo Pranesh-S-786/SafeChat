@@ -25,38 +25,40 @@ describe('Biometric Verification, Landmarks & Liveness Test Suite', () => {
     const noseX = options?.noseOffsetX ?? 0;
     const noseY = options?.noseOffsetY ?? 0;
 
+    const s = eyeDist / 0.2; // Scale factor relative to baseline eye distance
+
     const landmarks: Array<{ x: number; y: number; z: number }> = [];
 
     // Prepopulate 478 points
     for (let i = 0; i < 478; i++) {
-      landmarks.push({ x: 0.5 + tx, y: 0.5 + ty, z: 0 });
+      landmarks.push({ x: 0.5 + tx, y: 0.45 + ty, z: 0 });
     }
 
     // Set key landmarks:
     // Left eye outer: landmark 33
     landmarks[33] = { x: 0.5 - eyeDist / 2 + tx, y: 0.45 + ty, z: 0 };
     landmarks[133] = { x: 0.5 - eyeDist / 4 + tx, y: 0.45 + ty, z: 0 };
-    landmarks[159] = { x: 0.5 - eyeDist / 3 + tx, y: 0.44 + ty, z: 0 };
-    landmarks[145] = { x: 0.5 - eyeDist / 3 + tx, y: 0.46 + ty, z: 0 };
+    landmarks[159] = { x: 0.5 - eyeDist / 3 + tx, y: 0.45 - 0.01 * s + ty, z: 0 };
+    landmarks[145] = { x: 0.5 - eyeDist / 3 + tx, y: 0.45 + 0.01 * s + ty, z: 0 };
 
     // Right eye outer: landmark 263
     landmarks[263] = { x: 0.5 + eyeDist / 2 + tx, y: 0.45 + ty, z: 0 };
     landmarks[362] = { x: 0.5 + eyeDist / 4 + tx, y: 0.45 + ty, z: 0 };
-    landmarks[386] = { x: 0.5 + eyeDist / 3 + tx, y: 0.44 + ty, z: 0 };
-    landmarks[374] = { x: 0.5 + eyeDist / 3 + tx, y: 0.46 + ty, z: 0 };
+    landmarks[386] = { x: 0.5 + eyeDist / 3 + tx, y: 0.45 - 0.01 * s + ty, z: 0 };
+    landmarks[374] = { x: 0.5 + eyeDist / 3 + tx, y: 0.45 + 0.01 * s + ty, z: 0 };
 
     // Nose tip: landmark 1
-    landmarks[1] = { x: 0.5 + tx + noseX, y: 0.52 + ty + noseY, z: -0.05 };
+    landmarks[1] = { x: 0.5 + tx + noseX, y: 0.45 + 0.07 * s + ty + noseY, z: -0.05 * s };
 
     // Chin: landmark 152
-    landmarks[152] = { x: 0.5 + tx, y: 0.72 + ty, z: 0 };
+    landmarks[152] = { x: 0.5 + tx, y: 0.45 + 0.27 * s + ty, z: 0 };
 
     // Forehead: landmark 10
-    landmarks[10] = { x: 0.5 + tx, y: 0.28 + ty, z: 0 };
+    landmarks[10] = { x: 0.5 + tx, y: 0.45 - 0.17 * s + ty, z: 0 };
 
     // Mouth corners: 61, 291
-    landmarks[61] = { x: 0.44 + tx, y: 0.62 + ty, z: 0 };
-    landmarks[291] = { x: 0.56 + tx, y: 0.62 + ty, z: 0 };
+    landmarks[61] = { x: 0.5 - 0.06 * s + tx, y: 0.45 + 0.17 * s + ty, z: 0 };
+    landmarks[291] = { x: 0.5 + 0.06 * s + tx, y: 0.45 + 0.17 * s + ty, z: 0 };
 
     return landmarks;
   };
